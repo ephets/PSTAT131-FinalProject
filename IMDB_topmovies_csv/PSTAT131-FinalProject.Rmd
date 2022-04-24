@@ -1,0 +1,73 @@
+---
+title: "Final Project: Top 1000 Movies on IMDB"
+author: "Ephets Head"
+date: "4/24/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Introduction**
+
+In this project, I will be working with a dataset of the 1000 highest-rated movies on the IMDb (International Movie Database) website. Using the information provided in this dataset, I will create and test a model that will predict the gross revenue of a film based on its other attributes. I will also conduct inference on which factors are actually useful in predicting the gross, and how some factors may be correlated with others. 
+
+**Loading Data and Packages **
+
+The dataset "IMDB Movies Dataset" includes 1000 observations with 16 variables each. Some of the variables, like `Poster_Link` which is simply the url to the movie poster, are not relevant to our model so they will be discarded during data cleaning. Some of the more important variables, however, I will describe below. 
+
+`Series_Title` is where the name of each movie is stored.
+
+`Released_Year` is the year in which the movie was first released.
+
+`Certificate` is the rating certificate that the movie is classified as. 
+
+`Runtime` is the duration of the movie in minutes.
+
+`Genre` is the type or genre of the movie.
+
+`IMDB_Rating` is the rating out of 10 that the movie received on the IMDb website.
+
+`Meta_score` is the rating of the film out of 100, as calculated from the average of a large group of respected critics' reviews.
+
+`Director` is the name of the movie's director. 
+
+`Gross` is the total money earned by that movie (the outcome variable.)
+
+```{r, echo=FALSE}
+#load packages
+library(tidymodels)
+library(tidyverse)
+
+tidymodels_prefer()
+setwd("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv")
+IMDB <- read.csv('IMDB-csvdata.csv')
+```
+
+**Data Cleaning**
+
+To make sure our data is tidy, we can first look at all the variable names of the dataset to make sure they are unique and separated only  by "_". This dataset is very organized, and its names are already clean. 
+
+```{r}
+names(IMDB)
+```
+
+Next, we must deselect unimportant/ irrelevant variables, such as `Poster_Link` and `Overview`. 
+
+```{r}
+IMDB <- IMDB %>%
+  select(-Poster_Link,-Overview)
+```
+
+Now our dataset only includes 14 variables for each observation.
+
+Since the purpose of our model will be to predict gross revenue, we must remove any observations with missing values for `Gross`. 
+
+```{r}
+#IMDB <- IMDB %>%
+  #filter(
+    
+  )
+```
+
