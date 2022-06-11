@@ -1,0 +1,12 @@
+---
+title: 'Codebook: IMDB Dataset'
+author: "Ephets Head"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
