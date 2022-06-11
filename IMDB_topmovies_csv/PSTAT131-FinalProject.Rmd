@@ -1113,7 +1113,7 @@ Random forest performed significantly better than the bagging model, which makes
 
 From analysis of our final model fit to the testing data, it appears that `no_of_votes` is the feature most useful in predicting our response, though the top actors and directors also have a significant influence on/relationship with `gross`. 
 
-The IMDB TOP 1000 MOVIES dataset clearly is skewed; the movies are all in the `imdb_rating` range of $7.6-9.3$, which means that the correlated `no_of_votes` and `gross` values are also skewed. To build a model that could accurately predict any random movie's revenue based on these predictors, it would need to be trained on a much more broad and varied dataset, with many more observations. However, for the limited data that was available, the finished model performed well. 
+The IMDB TOP 1000 MOVIES dataset clearly is skewed; the movies are all in the `imdb_rating` range of $7.6-9.3$, which means that the correlated `no_of_votes` and `gross` values are also skewed. To build a model that could accurately predict any random movie's revenue based on these predictors, it would need to be trained on a much more broad and varied dataset, with many more observations. However, for the limited data that was available, the finished model performed very well.
 
 
 
