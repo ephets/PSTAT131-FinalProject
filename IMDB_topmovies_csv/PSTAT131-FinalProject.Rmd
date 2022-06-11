@@ -1101,12 +1101,20 @@ test_predictions_rmse %>%
 
 The graph shows that the RMSE of the model's predictions decreases steeply when `no_of_votes` surpasses about 1,000,000. The dotted line represents the average RMSE of the model on the testing data, and all the movies with higher numbers of votes have noticeably lower-than-average error. In other words, higher values of `no_of_votes` correlate to much better prediction accuracy. 
 
-The last variable whose performance we will be exploring is `released_year`. How did the prediction accuracy of our model change depending on when a movie was released? 
-
-```{r}
-
-```
-
 ## Conclusion
 
-We wanted to build a model that could predict the gross revenue of a movie with some accuracy given the film's release year, runtime, director, main actor, IMDb rating, and the number of votes it received on the IMDb website. 
+I wanted to build a model that could predict the gross revenue of a movie with some accuracy given the film's release year, runtime, director, main actor, IMDb rating, and the number of votes it received on the IMDb website. 
+
+To incorporate categorical variables that had such a large range of possible values, I had to set a threshold for the number of times a category would occur, and to group together all categories that appeared too infrequently. This definitely led to less specific model-building, but with hundreds of levels in each categorical feature, the data needed to be simplified. In the future, if I were to try again to build a more precise model, I might set the threshold lower to allow for more individual levels to be considered. 
+
+In fitting my models, the Decision Tree Model ended up with the lowest `rsq` by a large margin. This is not too surprising, since Decision Tree models are especially prone to overfitting. The polynomial regression model only performed slightly better; it's possible that it would have performed well if the expansion had been done on a different continuous variable, but the optimal tuned model was when `degree=1`, meaning it performed better without any polynomials. 
+
+Random forest performed significantly better than the bagging model, which makes sense since there is more tuning involved and a few of the variables in our recipe seem to have little statistical significance in predicting `gross`.
+
+From analysis of our final model fit to the testing data, it appears that `no_of_votes` is the feature most useful in predicting our response, though the top actors and directors also have a significant influence on/relationship with `gross`. 
+
+The IMDB TOP 1000 MOVIES dataset clearly is skewed; the movies are all in the `imdb_rating` range of $7.6-9.3$, which means that the correlated `no_of_votes` and `gross` values are also skewed. To build a model that could accurately predict any random movie's revenue based on these predictors, it would need to be trained on a much more broad and varied dataset, with many more observations. However, for the limited data that was available, the finished model performed well. 
+
+
+
+
