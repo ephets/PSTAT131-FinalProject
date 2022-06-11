@@ -1,21 +1,26 @@
+
 ---
 title: "Final Project: Top 1000 Movies on IMDB"
 author: "Ephets Head"
-date: "4/24/2022"
-output: pdf_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
 ```
 
-**Introduction**
+## Introduction
 
-In this project, I will be working with a dataset of the 1000 highest-rated movies on the IMDb (International Movie Database) website. Using the information provided in this dataset, I will create and test a model that will predict the gross revenue of a film based on its other attributes. I will also conduct inference on which factors are actually useful in predicting the gross, and how some factors may be correlated with others. 
+In this project, I will be working with a data set of the 1000 highest-rated movies on the IMDb (International Movie Database) website. Using the information provided in this data set, I will create and test a model that will predict the gross revenue of a film based on its other attributes. I will also conduct inference on which factors are actually useful in predicting the gross, and how some factors may be correlated with others. 
 
-**Loading Data and Packages **
+### Loading Data and Packages
 
-The dataset "IMDB Movies Dataset" includes 1000 observations with 16 variables each. Some of the variables, like `Poster_Link` which is simply the url to the movie poster, are not relevant to our model so they will be discarded during data cleaning. Some of the more important variables, however, I will describe below. 
+The data set "IMDB Movies Dataset" includes 1000 observations with 16 variables each. Some of the variables, like `Poster_Link` which is simply the url to the movie poster, are not relevant to our model so they will be discarded during data cleaning. The other variables I will describe below. 
 
 `Series_Title` is where the name of each movie is stored.
 
@@ -25,49 +30,1083 @@ The dataset "IMDB Movies Dataset" includes 1000 observations with 16 variables e
 
 `Runtime` is the duration of the movie in minutes.
 
-`Genre` is the type or genre of the movie.
-
 `IMDB_Rating` is the rating out of 10 that the movie received on the IMDb website.
+
+`No_of_Votes` is the number of people who 'voted' for a film, or assigned it a rating out of 10, on the IMDb website.
 
 `Meta_score` is the rating of the film out of 100, as calculated from the average of a large group of respected critics' reviews.
 
 `Director` is the name of the movie's director. 
 
-`Gross` is the total money earned by that movie (the outcome variable.)
+`Gross` is the total amount of money earned by the movie (our outcome variable.)
 
-```{r, echo=FALSE}
+`Star1`, `Star2`, `Star3` and `Star4` are the names of the four leading actors in the movie. 
+
+
+```{r, echo=FALSE, include=FALSE}
 #load packages
 library(tidymodels)
 library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(janitor)
+library(rsample)
+library(randomForest)
+library(ranger)
+library(glmnet)
+library(rpart.plot)
+library(vip)
+library(corrr)
+library(corrplot)
+library(xgboost)
+```
 
+```{r}
+#read in the data
 tidymodels_prefer()
 setwd("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv")
 IMDB <- read.csv('IMDB-csvdata.csv')
 ```
 
-**Data Cleaning**
+## Data Cleaning
 
-To make sure our data is tidy, we can first look at all the variable names of the dataset to make sure they are unique and separated only  by "_". This dataset is very organized, and its names are already clean. 
+To make sure our data is tidy, we can first use the function `clean_names()` to make sure the variable names of the data set are unique and include no empty spaces " ". This data set is pretty well-organized, so the only real effect of the function is to standardize the names so that they are all lowercase. 
 
 ```{r}
+IMDB <- clean_names(IMDB)
 names(IMDB)
 ```
 
-Next, we must deselect unimportant/ irrelevant variables, such as `Poster_Link` and `Overview`. 
+Next, we must deselect unimportant/ irrelevant variables, such as `poster_link` and `overview`. 
 
-```{r}
+```{r class.source="fold-show"}
 IMDB <- IMDB %>%
-  select(-Poster_Link,-Overview)
+  select(-poster_link,-overview)
 ```
 
-Now our dataset only includes 14 variables for each observation.
 
-Since the purpose of our model will be to predict gross revenue, we must remove any observations with missing values for `Gross`. 
+Now our data set only includes 14 variables for each observation.
+
+
+Since we are designing a supervised machine learning model to predict gross revenue, we will remove any observations with missing values for `gross` (these observations are not supervised, so we won't be able to check the accuracy of their predictions). 
+
+```{r class.source="fold-show"}
+#by creating a subset of IMDB where all observations only have positive values of gross, we exclude all observations with missing gross data
+IMDB <- subset(IMDB, gross > 0)
+```   
+
+Now our data set is made up of 831 observations, with 14 features each.
+
+Before we do any manipulation on the features of the data set, we'll use `summary(is.na())` to take a look at where other missing values might be located. 
 
 ```{r}
-#IMDB <- IMDB %>%
-  #filter(
-    
+summary(is.na(IMDB))
+```
+
+
+At this point, the only remaining feature with missing values is `meta_score`. To make sure our model runs smoothly, we will deselect this feature from the data set, and let the rating of the movie be represented instead by `imdb_rating`. 
+
+```{r class.source="fold-show"}
+IMDB <- IMDB %>%
+  select(-meta_score)
+```
+
+Some of our features which should be quantitative are stored non-numerically, so our next step in data cleaning is to convert the data for variables `runtime`, `no_of_votes`, `imdb_rating`, and `released_year` into integers/numeric data. 
+
+`Runtime` is stored in the character format 'XXX min', so we will first select only the first three characters and then convert them to an integer value. 
+
+```{r class.source="fold-show"}
+IMDB <- IMDB %>%
+  mutate(
+    runtime = substr(runtime,1,3),
+    runtime = as.integer(runtime),
+    imdb_rating = as.numeric(imdb_rating),
+    no_of_votes = as.numeric(no_of_votes)
   )
 ```
 
+
+Before we can convert `Released_Year` to an integer, we must fix a small error found in one of the observations, where the value of `Released_Year` is mistakenly input as the movie certificate 'PG'. Instead of removing the observation, I will manually enter the release date of the movie so that it can still be used to develop/test our model.
+
+
+```{r class.source="fold-show"}
+#First we will replace the entry of Released_Year that equals "PG" with the actual year
+#The movie Apollo 13 was released in 1995
+IMDB$released_year <- replace(IMDB$released_year, IMDB$released_year == "PG",'1995')
+
+#Now we can convert all the entries in Released_Year to integers
+IMDB <- IMDB %>%
+  mutate(
+    released_year = as.integer(released_year)
+  )
+```
+
+In order to create movie categories by `director`, `certificate`, and `star`, we will factor the categorical variables. We will only include the first variable `star1`, since each `star` variable has hundreds of distinct levels when factored. 
+
+```{r class.source="fold-show"}
+IMDB <- IMDB %>%
+  mutate( 
+    director = factor(director),
+    star1 = factor(star1),
+    certificate = factor(certificate)
+  )
+```
+
+`Genre` is stored as a list of strings, where each movie is classified as multiple genres. To simplify our model building process, we will remove the variable from the dataset. We will also remove the secondary variables that supply the stars of each movie.
+
+```{r class.source="fold-show"}
+#now we can deselect the string variable 'genre'
+IMDB <- IMDB %>% select(-genre,-star2,-star3,-star4)
+
+```
+
+Our data set is now made up of 9 variables and 831 observations. 
+
+
+### Data Split 
+
+After our data has been cleaned and mutated into usable data types, we perform an initial split; 80% of the data is put into the training set, and 20% is set aside for the testing set. Stratified sampling is used on the outcome variable `gross`.
+
+```{r, class.source="fold-show", eval=FALSE}
+set.seed(1000)
+imdb_split <- initial_split(IMDB, prop=0.8, strata=gross)
+imdb_train <- training(imdb_split)
+imdb_test <- testing(imdb_split)
+
+dim(imdb_split)
+```
+
+There are 663 observations in our training data set and 168 in our testing data set. 
+
+## Exploratory Data Analysis
+
+Using the 663 observations (movies) in our training set, I will explore the distribution of certain variables as well as any hypotheses I might have about their correlations or significance to the outcome variable. First, let's reload our data and take a look at a correlation matrix of all the continuous variables.
+
+```{r}
+load("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/model_setup.rda")
+```
+
+
+````{r corr}
+imdb_cor <- cor(imdb_train[sapply(imdb_train, is.numeric)])
+
+corrplot(imdb_cor, method='number')
+````
+
+The correlation matrix indicates that `no_of_votes` has a significant correlation with `gross`, as well as with `imdb_rating`. More surprisingly, there is also a slight correlation between `imdb_rating` and `runtime`. 
+
+### Release Year
+
+Before we explore how `released_year` affects `gross` and other variables, we will check how the movies in the data set are distributed across the years. To get a feeling for the distribution, we can count the movies by year and ouput some summary statistics.
+
+````{r released_year_summary}
+#first we will sort and count the year distribution and output summary statistics
+min_year <- min(imdb_train$released_year)
+max_year <- max(imdb_train$released_year)
+
+sort_by_year <- group_by(imdb_train, released_year)
+year_counts <- count(sort_by_year)
+year_counts_df <- data.frame(year_counts)
+
+max_yc <- max(year_counts_df$n)
+min_yc <- min(year_counts_df$n)
+mpop_year <- subset(year_counts_df, n == max_yc)
+
+print(paste("The earliest value of released_year in our training data:", min_year))
+print(paste("The most recent value of released_year in our training data:", max_year))
+
+print(paste("The year in which the most movies in the data set were released:", mpop_year$released_year))
+print(paste("The maximum number of observed movies released in one year:", max_yc))
+
+````
+
+Now we look at a visual representation of the variable's distribution in the training set. 
+
+````{r released_year_plot}
+
+color_set <- c("chocolate2", "tan","burlywood","cornsilk4",  "bisque3","brown")
+
+barplot(height = year_counts_df$n, xlab= "Year of Release", ylab= "Number of Movies", names.arg= year_counts_df$released_year,cex.names = 0.6, col= color_set)
+
+````
+
+From the bar plot above, it appears that the number of movies in the training data released each year starts very low and begins to increase steeply in the 1990s, reaching a maximum in 2004. 
+
+### Gross
+
+Since our model will be predicting `gross`, it is useful to look at the distribution of the variable over the years; in other words, when were the most high-grossing movies released? First, let's identify the 10 movies with the largest values of `gross`.
+
+
+````{r}
+imdb_sorted <- arrange(imdb_train,desc(gross))
+
+top_10_gross <- head(imdb_sorted,10)
+
+top_10_gross <- top_10_gross %>%
+  mutate(
+    gross = substr(gross,1,3),
+    gross = as.numeric(gross)
+  )
+
+reds = c("tomato","firebrick2","indianred1","darkred",
+         "coral", "tomato","firebrick2","indianred1",
+         "darkred","coral")
+
+top_10_gross %>%
+  ggplot(aes(series_title, gross)) +
+  geom_col(fill=reds) +
+  coord_flip() + 
+  labs(
+    title="Top 10 Highest-Grossing Movies in Training Data",
+    y="Gross Revenue (in Millions)",
+    x= "Movie Title"
+  )
+
+
+
+````
+
+
+Now we can look at the distribution of `gross` in the training data over the years. 
+
+
+````{r}
+summed_grossy <- imdb_train %>%
+  group_by(released_year) %>%
+  summarize(Gross=sum(gross)) 
+
+plot(summed_grossy, xlab= "Released Year", main="Total Gross of Observed Movies Released Each Year", col="darkblue", type="l")
+
+````
+
+Since we have already observed that the number of movies in our data set released per year increased steeply starting in the late 90's to 2000's, it is unsurprising to see that the total gross revenue by year begins to rise around that time. It may be more helpful to divide each year's `gross` by the number of movies released, to get a sense of how the average revenue of a single movie has changed over the years. 
+
+````{r}
+grossy_avg <- summed_grossy %>%
+  mutate(
+    Gross = (Gross / year_counts_df$n)
+  )
+grossy_avg <- grossy_avg %>%
+  mutate(
+    Gross= Gross / 1000000
+  )
+
+plot(grossy_avg, type="l", col="darkgreen", main="Average Gross Per Movie by Year", ylab="Gross in Millions of Dollars", xlab="Released Year")
+
+````
+
+From the graph above, we can infer that the average `gross` per movie over the years is always fluctuating, but increases significantly starting in the 1970's and remains on a clear upward trend from the early 2000's to 2019. 
+
+
+### Director
+
+Let's take a quick look at the top directors in our data set, that is, the directors who appear most frequently in the training data. 
+
+````{r}
+sorted_director <- group_by(imdb_train, director)
+director_counts <- count(sorted_director)
+director_cdf <- data.frame(director_counts)
+
+director_cdf <- arrange(director_cdf, desc(n))
+top_directors <- head(director_cdf,20)
+
+color_set2 <- c("chocolate2", "tan","brown","cornsilk4",  "bisque3",
+               "brown","chocolate2", "tan","burlywood", "pink", 
+               "chocolate2", "tan","brown","cornsilk4",  "bisque3",
+               "brown","chocolate2", "tan","burlywood", "pink")
+
+top_directors %>%
+  ggplot(aes(director, n)) +
+  geom_col(fill=color_set2) +
+  coord_flip() + 
+  labs(
+    title= "Top 20 Most Frequently-Appearing Directors in Training Data ",
+    x= "Director",
+    y= "Number of Observed Movies"
+  )
+
+````
+
+The most commonly occurring director is Martin Scorsese, with 9 of his movies appearing in the training data set. Alfred Hitchcock, Christopher Nolan, and Steven Spielberg each directed 8 movies in the training data set, while David Fincher and Woody Allen both directed 7. 
+
+Using only the `gross` data for the movies of each of these 6 directors, we can analyze the relationship between `director` and `gross`, to see how these popular directors' movies fare compared to the `gross` of an average movie in the training data. 
+
+````{r}
+total_gross <- imdb_train %>%
+  summarize(total_gross=sum(gross))
+
+average_gross <- total_gross$total_gross / 663
+
+top_gross_director <- sorted_director %>%
+  filter(
+    director == "Martin Scorsese" |
+    director == "Christopher Nolan" |
+    director == "David Fincher" |
+    director == "Woody Allen" |
+    director == "Alfred Hitchcock" |
+    director == "Steven Spielberg"
+  )
+
+top_direct_counts <- c(8,8,7,9,8,7)
+gross_dir_sum <- top_gross_director %>%
+  summarize(gross = sum(gross)) 
+
+new_row <- list("Average", average_gross)
+
+gross_dir_sum$gross <- gross_dir_sum$gross / top_direct_counts
+
+gross_dir_sum <- gross_dir_sum %>%
+  mutate(
+    director = as.character(director)
+  )
+
+gross_dir_sum[7,] <- new_row
+
+gross_dir_sum <- gross_dir_sum %>%
+  mutate(
+    gross = gross / 1000000
+  )
+
+sev_colors <- c("chocolate2", "tan","burlywood","cornsilk4",  "bisque3","brown","darkred")
+
+gross_dir_sum %>%
+  ggplot(aes(director,gross)) +
+  geom_col(fill=sev_colors) + 
+  coord_flip() +
+  labs(
+    title= "Average Gross per Movie by Director",
+    y= "Average Gross Revenue in Millions",
+    x= "Director"
+  )
+
+
+````
+
+Movies directed by Christopher Nolan and Steven Spielberg have a significantly higher average `gross` than the average movie in the data set — almost 4 times larger. This suggests that movies directed by certain directors are linked with much higher values of `gross`. 
+
+### IMDB Rating
+
+The observations in the data set "IMDB Top 1000 Movies" were chosen due to their high values of `imdb_rating`, meaning this variable will probably not have a very wide range. I hypothesize that movies with higher IMDB ratings will have higher values of gross. Let's view the distribution of the variable across the training data. 
+
+````{r}
+rating_grouped <- imdb_train %>%
+  group_by(imdb_rating)
+
+rating_counts <- count(rating_grouped)
+  
+
+rating_counts %>%
+  ggplot(aes(imdb_rating, n)) +
+  geom_col(fill = color_set2[1:16]) + 
+  labs(
+    title= "IMDB Rating Distribution Across Training Data",
+    x= "IMDB Rating Score",
+    y= "Frequency"
+  )
+
+````
+
+In the training data, `imdb_rating` ranges from 7.6 to 9.3, with the bulk of the observations occupying the lower end of the spectrum. The most commonly appearing value in the data set is 7.7, while the maximum value 9.3 is the most uncommon.
+
+Next, we can take a closer look at how `gross` is distributed within each level of `imdb_rating`. 
+
+````{r}
+rating_grouped2 <- rating_grouped %>%
+  mutate(
+    gross = gross / 1000000
+  )
+
+rating_grouped2 %>%
+  ggplot(aes(x=imdb_rating,y= gross)) +
+  geom_point(alpha=1) +
+  stat_summary(aes(y=gross,group=1), fun=mean, colour="orange", geom="line") +
+  labs(
+    title= "Gross Revenue of Observed Movies vs. IMDB Rating",
+    x= "IMDB Rating Score",
+    y= "Gross in Millions of Dollars"
+  )
+
+  
+
+````
+
+The scatter plot above shows that `gross` does increase slightly with higher scores of `imdb_rating`, but many of the highest-grossing observed movies actually occur around the 7.8-8.4 range. 
+
+It might also be interesting to observe how values of `imdb_rating` have changed over time. To explore the relationship between these variables, we can construct another plot of `imdb_rating` versus `released_year`. 
+
+````{r}
+sort_by_year %>%
+  ggplot(aes(x=released_year, y=imdb_rating)) +
+  geom_point(alpha=1) +
+  coord_flip() +
+  labs(
+    title= "IMDB Rating for Observed Movies by Year of Release",
+    x= "Released Year",
+    y="IMDB Rating Score"
+  )
+````
+
+There is no glaring correlation between `imdb_rating` and `released_year`, especially considering the fact that most of the observations are skewed towards recent years and a rating score in the 7-8 range. However, since most of the data is clustered in the top left corner of the plot, we can see that the majority of the lower-rated films in the training data were released recently — over the last 30 years. 
+
+### Number of Votes
+
+From the correlation matrix we looked at in the beginning of our EDA, we know that the feature `no_of_votes` has a significant correlation with `gross`. This seems pretty intuitive: the more people vote on a movie, the more people have probably watched it, which would suggest a larger gross revenue. Let's first explore the distribution of `no_of_votes` in the training data with a visual representation.
+
+```{r}
+thous_votes <- imdb_train %>%
+  mutate(
+    no_of_votes = no_of_votes / 1000 ,
+    no_of_votes = as.integer(no_of_votes)
+  )
+thous_votes_counts <- thous_votes %>%
+  group_by(no_of_votes) %>%
+  count(no_of_votes)
+ 
+thous_votes_counts %>%
+  ggplot(aes(no_of_votes, n)) +
+  geom_line(col="coral") +
+  geom_vline(xintercept=150, linetype=2)+
+  geom_vline(xintercept=25, linetype=2)+
+  labs(
+    title= "Distribution of the Number of Votes Among Observed Movies",
+    x= "Thousands of Votes",
+    y= "Number of Movies"
+  )
+```
+
+The majority of the movies seem to have a `no_of_votes` value between 25,000 and 150,000, represented by the area between the two dashed vertical lines. 
+Since our correlation matrix showed a correlation between `no_of_votes` and our outcome `gross`, let's graph the relationship between the two variables. 
+
+```{r}
+imdb_train %>% 
+  ggplot(aes(no_of_votes, gross)) + 
+  geom_point(col="darkred") +
+  geom_smooth(aes(no_of_votes ,gross),method="lm",linetype=2,
+              fill="gray",col="black")+
+  labs(
+    title="Gross Revenue of Films by Number of Votes", 
+    x="Number of Votes Received",
+    y= "Gross Revenue"
+  )
+```
+
+The line of best fit drawn through the graph gives us an idea of the overarching relationship between `no_of_votes` and `gross`; it looks like there is a very significant positive correlation between the two. As the number of votes received for a movie increases, so does the gross revenue. The more votes a movie receives, the more popular we can assume it is, and this translates into a greater revenue. 
+
+Since `imdb_rating` also showed a correlation with `no_of_votes`, let's see how those two variables interact visually. A reminder: the voters being counted in `no_of_votes` are collectively responsible for creating the `imdb_rating` value. 
+
+```{r}
+imdb_train %>%
+  ggplot(aes(no_of_votes, imdb_rating)) +
+  geom_smooth(aes(no_of_votes ,imdb_rating),method="lm",linetype=2,
+              fill="gray",col="black")+
+  geom_line(col="brown") +
+  
+  labs(
+    title="IMDB Rating by Number of Votes",
+    x= "Number of Votes (Ratings) Received",
+    y= "Rating Score (out of 10)"
+  )
+```
+
+The line of best fit again shows a substantial positive correlation: the movies with the highest rating on IMDb also have the highest number of votes. Good movies, apparently, incentivize more people to vote on them.
+
+### Stars
+
+In the original dataset, there are four separate predictor variables to represent the stars of the movie: `star1`, `star2`, `star3`, and `star4`. Since each of these variables are factors with hundreds of levels, we are only including `star1`, and in our recipe we will group together many of the levels in the variable representing actors whose names rarely appear. 
+
+```{r}
+imdb_star <- group_by(imdb_train, star1)
+
+star_counts <- count(imdb_star)
+star_counts <- arrange(star_counts, desc(star_counts$n))
+star_counts <- head(star_counts,15)
+star_counts_df <- data.frame(star_counts)
+
+fifteen_col <- c("pink", "chocolate2", "tan","cornsilk4",  "bisque3","brown","darkred", "pink", "chocolate2", "tan","burlywood","cornsilk4",  "bisque3","brown","darkred")
+
+star_counts_df %>%
+  ggplot(aes(star1,n)) +
+  geom_col(fill=fifteen_col) + 
+  coord_flip() +
+  labs(
+    title= "Number of Observed Movies by Main Starring Actor",
+    y= "Number of Movies",
+    x= "Starring Actor"
+  )
+```
+
+The most frequently-occurring actors in the `star1` category are Al Pacino, Tom Hanks, and Robert De Niro, each starring in 10 of the observed movies in our training data set. The fourth most-common actor who occurs in the `star1` column is Clint Eastwood with a count of 8 films, followed by Leonardo DiCaprio, Denzel Washington, and Christian Bale with 7. Let's take a look at how the average values of `gross` for movies starring these actors fare against the average movie in the dataset.
+
+```{r}
+
+top_gross_stars <- imdb_star %>%
+  filter(
+    star1 == "Al Pacino" |
+      star1 == "Tom Hanks" |
+      star1 == "Robert De Niro" |
+      star1 == "Denzel Washington" |
+      star1 == "Christian Bale" |
+      star1 == "Leonardo DiCaprio" |
+      star1 == "Clint Eastwood"
+  )
+
+top_star_counts <- c(10,7,8,7,7,10,10)
+gross_star_sum <- top_gross_stars %>%
+  summarize(gross = sum(gross)) 
+
+gross_star_sum$gross <- gross_star_sum$gross / top_star_counts
+
+gross_star_sum <- gross_star_sum %>%
+  mutate(
+    star1 = as.character(star1),
+  )
+
+gross_star_sum[8,] <- new_row
+
+gross_star_sum <- gross_star_sum %>%
+  mutate(
+    gross = gross / 1000000
+  )
+
+eight_colors <- c("chocolate2", "tan","burlywood","cornsilk4",  "bisque3","brown","darkred", "pink")
+
+gross_star_sum %>%
+  ggplot(aes(star1,gross)) +
+  geom_col(fill=eight_colors) + 
+  coord_flip() +
+  labs(
+    title= "Average Gross per Movie by Starring Actor",
+    y= "Average Gross Revenue in Millions",
+    x= "Starring Actor"
+  )
+
+```
+
+According to this graph, movies whose main star is Leonardo DiCaprio, Christian Bale, or Tom Hanks have a much higher average gross revenue than the rest of the movies in the dataset. 
+
+## Building and Running Our Models
+
+### Cross-Validation 
+
+After Data Cleaning and Exploratory Data Analysis, our training data should be ready to be fit to a regression model. The first step we will take is folding the data into 10 "folds", with 5 repeats, stratified by `gross`. 
+
+```{r class.source="fold-show"}
+imdb_folds <- vfold_cv(imdb_train, v=10, repeats=5, strata=gross)
+```
+
+When we tune and fit our models, we will perform k-fold cross validation across these folds. This is a method by which we test a model's accuracy repeatedly in order to prevent against *overfitting* — training the model too specifically to our training data, so that it won't perform well when applied to new data. In this form of cross-validation, for each of the *k* folds, that fold is designated as the testing data, and the model is trained on the other *k-1* folds. Each of the folds serve as a test set for the model at some point, and the average of all the accuracies is returned.
+
+Now that we have our folded data ready for cross-validation, our next step is to build a recipe for our models. We will be using 6 features to predict `gross`: `released_year`, `runtime`, `imdb_rating`, `director`, `star1`, and `no_of_votes`. The categorical predictors will need to be dummy-coded. In addition, since `director` and `star1` each have hundreds of levels, we will use `step_other()` to only create levels for actors and directors who appear in the data set more than 4 or 5 times.
+
+```{r class.source="fold-show"}
+#first step is to build the basic recipe using a formula and the training data
+imdb_rec <- recipe(gross ~ released_year + runtime + 
+                     imdb_rating +  no_of_votes + director + 
+                     star1,
+                   data= imdb_train) %>%
+  step_novel(all_nominal_predictors()) %>%
+  step_zv(all_predictors()) %>%
+  step_unknown(all_nominal_predictors()) %>%
+  step_other(star1, threshold= 5) %>%
+  step_other(director, threshold=4) %>%
+  step_dummy(director, star1) %>%
+#finally we add steps to center and scale (normalize) our predictors
+  step_normalize(all_predictors())
+
+```
+
+To make sure we are always working with the same training and testing sets, I saved all our model-building information to a file. 
+
+````{r}
+#for security, saving the data, recipe, and folds periodically
+save(imdb_train, imdb_test, imdb_folds, imdb_rec, file= "/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/model_setup.rda")
+````
+
+Our next step is to build and run five models: Random Forest, Decision Tree, Boosted Trees, Bagging Trees, and Polynomial Regression.
+
+### Model One : Random Forest
+
+```{r}
+load("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/model_setup.rda")
+```
+
+The first model I will be building is a Random Forest model, tuning parameters `mtry` and `min_n` for optimization. To begin, I will create a random forest model spec.
+
+```{r class.source="fold-show", eval=FALSE}
+#our outcome is continuous and not categorical, so we specify a regression model
+random_forest <- rand_forest(min_n= tune(),
+                             mtry=tune(),
+                             mode="regression") %>%
+  set_engine("ranger")
+  
+```
+
+Next we must create a work flow object and add both our recipe and our model spec.
+
+```{r class.source="fold-show", eval=FALSE}
+rf_wf <- workflow() %>%
+  add_model(random_forest) %>%
+  add_recipe(imdb_rec) 
+
+```
+
+Since we are tuning the parameter `mtry`, which represents the number of variables to be chosen randomly for each tree, we must set a plausible range for it and create a grid to be tuned. We want this value to stay within a range smaller than the total number of variables. Parameter `min_n` is the minimum number of data points required in a node before it splits.
+
+```{r class.source="fold-show", eval=FALSE}
+rf_grid <- grid_regular(mtry(range=c(1,15)),
+                        min_n(),levels=10)
+
+```
+
+Using our grid and work flow, we can now tune the model across the folded training data. Since this model takes a while to tune, we will save it for future use.
+
+```{r class.source="fold-show", eval=FALSE}
+metric_rsq <- metric_set(rsq)
+
+tuned_rf <- rf_wf %>%
+  tune_grid(resamples= imdb_folds,
+  grid= rf_grid,
+  metrics=metric_set(rsq,rmse)
+)
+```
+
+```{r, eval=FALSE}
+save(rf_wf, tuned_rf, file= "/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_randomforest.rda")
+```
+
+### Model Two: Decision Tree
+
+For our second model, we will be fitting a decision tree. As before, we will start by creating a decision tree regression model specification, using the engine `rpart`, and signaling that we will be tuning the parameter `cost_complexity`. This parameter represents the minimum amount of improvement needed at each node of the model, and prunes splits that don't meet the right criteria. 
+
+```{r class.source="fold-show", eval=FALSE}
+tree_spec <- decision_tree(cost_complexity = tune()) %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
+```
+
+Now we create a workflow object that includes the model spec and our recipe, and a grid of potential values for `cost_complexity` to take. 
+
+```{r class.source="fold-show", eval=FALSE}
+tree_wf <- workflow() %>%
+  add_model(tree_spec) %>%
+  add_recipe(imdb_rec)
+
+cc_grid <- grid_regular(
+  cost_complexity(range=c(-4,-1)),
+  levels=5
+)
+```
+
+Now we can combine our workflow and tuning grid to tune the model across our training data folds. Since running these models also takes a good amount of time, the workflow and tuned data are saved to another file. 
+
+```{r class.source="fold-show", eval=FALSE}
+tuned_dt <- tune_grid(
+  tree_wf,
+  resamples= imdb_folds,
+  grid=cc_grid,
+  metrics=metric_set(rmse,rsq)
+)
+```
+
+
+```{r, eval=FALSE}
+save(tuned_dt, tree_wf, file=
+       "/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_decisiontrees.rda")
+```
+
+### Model Three: Boosted Tree
+
+Next we will be building a Boosted Tree Model, using the engine `xgboost` and specifying that parameters `trees` and `tree_depth` will be tuned. The `trees` parameter represents the number of trees to be used in the model, and `tree_depth` represents the maximum number of splits per tree. 
+
+```{r class.source="fold-show", eval=FALSE}
+boost_spec <- boost_tree(trees=tune(), tree_depth=tune()) %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+```
+
+As we have done before, we will add the model spec to a workflow and then tune it across a grid of parameter values and our folded training data.
+
+```{r class.source="fold-show", eval=FALSE}
+boost_wf <- workflow()%>%
+  add_model(boost_spec) %>%
+  add_recipe(imdb_rec)
+
+boost_grid <- grid_regular(trees(range=c(1,1000)),
+                           tree_depth(range=c(1,10)),levels=5)
+
+```
+
+```{r class.source="fold-show", eval=FALSE}
+boost_tuned <- tune_grid(
+  boost_wf, 
+  resamples=imdb_folds,
+  grid=boost_grid,
+  metrics=metric_set(rmse,rsq)
+)
+
+```
+
+```{r, eval=FALSE}
+save(boost_tuned, boost_wf, file=
+       "/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_boostedtrees.rda")
+```
+
+### Model Four: Bagging Trees
+
+For our fourth model, we will try a bagging fit. This uses the same model and engine as random forest, with the specification that all the predictors are used in the model, instead of a range of values for `mtry`. As we did with our random forest model, we will tune `min_n`.
+
+```{r class.source="fold-show", eval=FALSE}
+bagging_spec <- rand_forest(mtry=.cols(),min_n=tune()) %>%
+  set_engine("randomForest", importance=TRUE) %>%
+  set_mode("regression")
+  
+```
+
+Now we can build a workflow, a grid, and tune it across the folded training data.
+
+```{r class.source="fold-show", eval=FALSE}
+bagging_wf <- workflow() %>%
+  add_model(bagging_spec) %>%
+  add_recipe(imdb_rec)
+
+bag_grid <- grid_regular(min_n(range=c(2,40)), levels=10)
+
+```
+
+```{r class.source="fold-show", eval=FALSE}
+tuned_bag <- tune_grid(
+  bagging_wf, 
+  resamples=imdb_folds, 
+  grid=bag_grid,
+  metrics=metric_set(rsq,rmse)
+)
+```
+
+```{r, eval=FALSE}
+save(tuned_bag, bagging_wf, file=
+       "/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_baggingmodel.rda")
+```
+
+### Model Five: Polynomial Regression
+
+Since our EDA shows a significant correlation between `gross` and
+`no_of_votes`, we will attempt to introduce non-linearity by performing a polynomial expansion (a variation of normal linear regression) on the variable `no_of_votes`, with an optimized value of `degree`. 
+
+First we will create our new polynomial recipe. 
+
+```{r class.source="fold-show", eval=FALSE}
+poly_rec <- imdb_rec %>%
+  step_poly(no_of_votes, degree=tune())
+```
+
+Now we can build our linear regression model spec, workflow, and grid of potential values for tuning the `degree` parameter. 
+
+```{r class.source="fold-show", eval=FALSE}
+
+poly_reg_spec <- linear_reg() %>%
+  set_mode("regression") %>%
+  set_engine("lm")
+
+poly_wf <- workflow() %>%
+  add_model(poly_reg_spec) %>%
+  add_recipe(poly_rec)
+
+degree_grid <- grid_regular(degree(range=c(1,10)),levels=10)
+
+```
+
+Finally, we tune the grid and model workflow to our training folds, then save our models.  
+
+```{r class.source="fold-show", eval=FALSE}
+tuned_pr <- tune_grid(
+  poly_wf,
+  resamples=imdb_folds,
+  grid=degree_grid,
+  metrics=metric_set(rmse,rsq)
+)
+```
+
+```{r, eval=FALSE}
+save(tuned_pr, poly_wf, file=
+       "/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_polyreg.rda")
+```
+
+
+## Analysis of Our Models
+
+Our models have all been built and tuned, so it's time to see how they performed and do some comparative analysis. 
+
+````{r}
+load("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_randomforest.rda")
+load("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_decisiontrees.rda")
+load("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_boostedtrees.rda")
+load("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_baggingmodel.rda")
+load("/Users/kevin/PSTAT126/PSTAT131/PSTAT131-FinalProject/IMDB_topmovies_csv/tuned_polyreg.rda")
+````
+
+### Performance of Random Forest
+
+We can visualize the `rsq` and `rmse` values of the tuned random forest models using `autoplot()`. $R^2$ is a measure of what proportion of the variance of the response can be explained by the predictor variables, and RMSE is the square root of the mean square error.
+
+````{r}
+autoplot(tuned_rf)
+````
+
+We are looking for low values of `rmse` and a high values of `rsq`, so from the image above it seems like low values of `min_n` and higher values of `mtry` are optimal, specifically when `min_n=2` and `mtry=13` Let's take a look at the best performing random forest models below.
+
+````{r}
+head(show_best(tuned_rf, "rsq"),2)
+head(show_best(tuned_rf, "rmse"),2)
+````
+
+It appears that the two highest-performing models are different based on which metric you are using to compare, however the model where `mtry=13` performs the best in both criteria.
+
+### Performance of Decision Tree 
+
+Only one parameter was tuned for the decision tree model, so the graph will look a bit different. 
+
+````{r}
+autoplot(tuned_dt)
+````
+
+From the graph of the tuned models above, it appears that the highest values of $R^2$ and the lowest values of RMSE are achieved with lower values of `cost_complexity`. Now we will take a look at the best-performing model of our tuned decision trees. 
+
+````{r}
+head(show_best(tuned_dt, "rsq"),1)
+head(show_best(tuned_dt, "rmse"),1)
+````
+
+The best decision tree model has an $R^2$ of only 0.407 and a higher (worse) RMSE than our best tuned random forest models. 
+
+### Peformance of Boosted Tree Model
+
+Next, a visual representation of our tuned boosted tree models: 
+
+````{r}
+autoplot(boost_tuned)
+````
+
+It looks like the boosted tree models achieve optimal `rsq` and `rmse` values when `tree_depth=3` and `trees=250`. We can view the best of our boosted tree models below. 
+
+````{r}
+head(show_best(boost_tuned, "rsq"),1)
+head(show_best(boost_tuned, "rmse"),1)
+````
+
+Our boosted tree `rsq` is about 0.556, and the `rmse` is about 72,097,646. To compare with our best random forest models, the values are very similar, but slightly better using boosted tree. 
+
+### Performance of Bagging Model
+
+In our bagging model, we used a `rand_forest` model spec but set `mtry` equal to the total number of predictors, and tuned the parameter `min_n`. 
+
+````{r}
+autoplot(tuned_bag)
+````
+
+The graph suggests that the model is optimized at `min_n=2`, and performs increasingly worse with larger nodes. We can view the metrics of the best-performing models below.
+
+````{r}
+head(show_best(tuned_bag,"rsq"),1)
+head(show_best(tuned_bag,"rmse"),1)
+````
+
+The best performing bagging model has an `rsq` of 0.55 and an `rmse` of 77,671,538.
+
+
+### Performance of Polynomial Regression 
+
+Finally, we assess the performance of our last model, a polynomial regression model with expansion on `no_of_votes`, the variable most highly-correlated with the outcome variable. 
+
+````{r}
+autoplot(tuned_pr)
+````
+
+````{r}
+head(show_best(tuned_pr, "rmse"),2)
+head(show_best(tuned_pr, "rsq"),2)
+````
+
+The best-performing models of our tuned polynomial regression only achieved an `rsq` of 0.471 and an `rmse` of 84,798,737.
+
+### Comparing the metrics of all our models
+
+To assess which model performed the best, we will look at their stats side by side.
+
+````{r}
+#first we select our best rf model and isolate the rsq and rmse
+rand_forest_best <- show_best(tuned_rf, "rsq")
+rf_rsq <- head(rand_forest_best$mean,1)
+rand_forest_best2 <- head(show_best(tuned_rf,"rmse"),1)
+rf_rmse <- rand_forest_best2$mean
+
+#next we do the same with our decision tree model
+dt_best <- show_best(tuned_dt, "rsq")
+dt_rsq <- head(dt_best$mean,1)
+dt_best2 <- show_best(tuned_dt,"rmse")
+dt_rmse <- head(dt_best2$mean,1)
+
+#boosted trees
+bt_best <- show_best(boost_tuned, "rsq")
+bt_rsq <- head(bt_best$mean,1)
+bt_best2 <- show_best(boost_tuned,"rmse")
+bt_rmse <- head(bt_best2$mean,1)
+
+#bagging model
+bag_best <- show_best(tuned_bag, "rsq")
+bag_rsq <- head(bag_best$mean,1)
+bag_best2 <- show_best(tuned_bag,"rmse")
+bag_rmse <- head(bag_best2$mean,1)
+
+#polynomial regression model
+pr_best <- show_best(tuned_pr, "rsq")
+pr_rsq <- head(pr_best$mean,1)
+pr_best2 <- show_best(tuned_pr,"rmse")
+pr_rmse <- head(pr_best2$mean,1)
+
+#now we create vectors for each category, and bind the columns together
+model_names <- c("Random Forest", "Decision Tree",
+                 "Boosted Tree", "Bagging",
+                 "Polynomial Regression")
+model_rsq <- c(rf_rsq, dt_rsq, bt_rsq, bag_rsq,
+               pr_rsq)
+model_rmse <- c(rf_rmse, dt_rmse, bt_rmse,
+                bag_rmse, pr_rmse)
+
+bind_cols(model=model_names,
+          rsq=model_rsq,
+          rmse=model_rmse)
+
+````
+
+The Decision Tree model performed the worst, followed closely by Polynomial Regression. The Random Forest, Bagging, and Boosted Tree models all performed pretty similarly to each other. 
+
+Since Boosted Trees achieved both the highest $R^2$ and the lowest RMSE, it is our best-performing model and will be fit to the training and testing data. 
+
+## Building Our Final Model (Boosted Tree)
+
+First, we need to update our Boosted Tree workflow with the parameter values of the optimal tuned model. For this, we use functions `select_best()` and `finalize_workflow()`. Then we fit the workflow to the training data.
+
+````{r}
+best_boost_model <- select_best(boost_tuned, metric="rsq")
+final_b_workflow<- finalize_workflow(boost_wf, best_boost_model)
+
+final_boost_fit <- fit(final_b_workflow, data=imdb_train)
+````
+
+Now for the moment of truth: fitting our trained model to our testing data set, and calculating our final RMSE. 
+
+```{r}
+set.seed(4848)
+
+test_predictions <- predict(final_boost_fit, new_data=imdb_test) %>%
+  bind_cols(gross = imdb_test$gross , title= imdb_test$series_title,
+            director = imdb_test$director)
+
+#ouput the first 10 predicted versus actual gross observations
+head(test_predictions,10)
+```
+
+From the table above, the model seems to be performing very well on the testing set. Now to calculate the RMSE:
+
+```{r}
+
+final_rmse <- test_predictions %>%
+  rmse(truth = gross, estimate=.pred)
+
+final_rmse
+```
+
+The model's root-mean-square error on the testing data is much lower than the RMSE of the training data! Using a scatterplot, we can see how closely the predicted `gross` values for our testing set resemble the actual observed values. 
+
+````{r}
+test_predictions %>%
+  ggplot(aes(.pred,gross)) +
+  geom_point(alpha=2, col="coral") +
+  geom_abline(gross=test_predictions$.pred) +
+  labs(
+    title= "Predicted Versus Observed Gross Revenue",
+    x= "Predicted Gross Revenue",
+    y= "Actual Gross Revenue"
+  )
+````
+
+The black line represents the desired outcome: the points at which our predictions are equal to the actual gross. Since the dots seem to follow the right trajectory, this means the model performs well, especially for lower-grossing films.
+
+Next we can do some exploratory analysis of the model performance by variable. First let's look at how the RMSE varied within the levels of `director`. Specifically, we will look at some of the top directors we examined in our EDA. 
+
+````{r}
+#first we calculate the RMSE for each director
+final_rmse_directors <- test_predictions %>%
+  select(director, gross, .pred) %>%
+  group_by(director) %>%
+  rmse(truth = gross, estimate=.pred)
+
+top_final_rmse_directors <- final_rmse_directors %>%
+  filter(
+    director == "Martin Scorsese" |
+      director == "Christopher Nolan" |
+      director == "David Fincher" |
+      director == "Woody Allen" |
+      director == "Alfred Hitchcock" |
+      director == "Steven Spielberg" |
+      director == "Wes Anderson" |
+      director == "Woody Allen" |
+      director == "Hayao Miyazaki" |
+      director == "Clint Eastwood" |
+      director == "Quentin Tarantino" |
+      director == "Billy Wilder" |
+      director == "Peter Jackson"
+  ) 
+
+top_final_rmse_directors <- top_final_rmse_directors %>%
+  mutate(
+    .estimate = .estimate / 1000000
+  )
+colorsetx <- c("chocolate2", "tan","burlywood","cornsilk4",
+              "bisque3","brown","darkred", "pink", "coral", "chocolate")
+
+top_final_rmse_directors %>%
+  ggplot(aes(director,.estimate)) +
+  geom_col(fill=colorsetx) +
+  coord_flip() +
+  labs(
+    title= "Mean Error In Predicted Gross of Top Directors' Films", 
+    y= "Root Mean Square Error in Millions of Dollars", 
+    x= "Director"
+  )
+
+````
+
+The RMSE of movies directed by Spielberg is much higher than that of the other directors, but in general the movies by these top directors all have lower error than the average RMSE of the dataset. This indicates that the model is able to predict movies directed by a top director more accurately.
+
+Next, let's take a look at the distribution of error by `no_of_votes`. 
+
+```{r}
+
+test_predictions_rmse <- test_predictions %>%
+  bind_cols(no_of_votes = imdb_test$no_of_votes) %>%
+  group_by(no_of_votes) %>%
+  rmse(truth = gross, estimate=.pred)
+
+test_predictions_rmse %>%
+  ggplot(aes(no_of_votes, .estimate)) + 
+  geom_point(col="darkred") +
+  geom_hline(yintercept=(final_rmse$.estimate),linetype=2 )+
+  labs(
+    title = "RMSE of Model Predictions as Numbers of Votes Increase",
+    x= "Number of Votes", 
+    y= "Root Mean Square Error of Model"
+  )
+```
+
+The graph shows that the RMSE of the model's predictions decreases steeply when `no_of_votes` surpasses about 1,000,000. The dotted line represents the average RMSE of the model on the testing data, and all the movies with higher numbers of votes have noticeably lower-than-average error. In other words, higher values of `no_of_votes` correlate to much better prediction accuracy. 
+
+The last variable whose performance we will be exploring is `released_year`. How did the prediction accuracy of our model change depending on when a movie was released? 
+
+```{r}
+
+```
+
+## Conclusion
+
+We wanted to build a model that could predict the gross revenue of a movie with some accuracy given the film's release year, runtime, director, main actor, IMDb rating, and the number of votes it received on the IMDb website. 
